@@ -1,5 +1,4 @@
 import os
-import configparser
 import logging
 from typing import Dict, List, Any, Optional
 try:
@@ -10,33 +9,33 @@ except ImportError:
 # Single source of truth for all configuration defaults
 DEFAULT_CONFIG: Dict[str, Any] = {
     # Authentication
-    "cookie": "",
+    "COOKIE": "",
     # Giveaway Settings
-    "pinned_games": "0",
-    "gift_type": "Special Mode",
-    "min_points": "70",
-    "ignored_words": "",
+    "PINNED_GAMES": "0",
+    "GIFT_TYPE": "Special Mode",
+    "MIN_POINTS": "70",
+    "IGNORED_WORDS": "",
     # Bot Behavior & Limits
-    "max_entries_per_session": "8",
-    "base_sleep_time": "120",
-    "sleep_time_no_games": "1800",
-    "sleep_time_no_points": "14400",
-    "min_request_interval": "5.0",
-    "max_consecutive_errors": "5",
+    "MAX_ENTRIES_PER_SESSION": "8",
+    "BASE_SLEEP_TIME": "120",
+    "SLEEP_TIME_NO_GAMES": "1800",
+    "SLEEP_TIME_NO_POINTS": "14400",
+    "MIN_REQUEST_INTERVAL": "5.0",
+    "MAX_CONSECUTIVE_ERRORS": "5",
     # Special Mode (Wishlist -> Group -> Recommended -> Copies -> DLC)
-    "special_mode_cycle": "True",
-    "special_mode_stages": "Wishlist,Group,Recommended,Copies,DLC",
+    "SPECIAL_MODE_CYCLE": "True",
+    "SPECIAL_MODE_STAGES": "Wishlist,Group,Recommended,Copies,DLC",
     # Discord Integration
-    "discord_webhook": "",
-    "discord_notification_time": "23:00",
-    "discord_mention_stats": "False",     # Opt-in @here for daily stats (default: False)
-    "discord_mention_wins": "True",       # Opt-in @here for won giveaways (default: True)
-    "discord_mention_alerts": "True",     # Opt-in @here for critical cookie expiry (default: True)
+    "DISCORD_WEBHOOK": "",
+    "DISCORD_NOTIFICATION_TIME": "23:00",
+    "DISCORD_MENTION_STATS": "False",     # Opt-in @here for daily stats
+    "DISCORD_MENTION_WINS": "True",       # Opt-in @here for won giveaways
+    "DISCORD_MENTION_ALERTS": "True",     # Opt-in @here for cookie expiry
     # Runtime & Logging
-    "timezone": "Europe/Budapest",
-    "log_level": "INFO",
-    "log_to_file": "True",
-    "log_to_console": "True",
+    "TIMEZONE": "Europe/Budapest",
+    "LOG_LEVEL": "INFO",
+    "LOG_TO_FILE": "True",
+    "LOG_TO_CONSOLE": "True",
 }
 
 FILTER_URLS: Dict[str, str] = {
@@ -82,35 +81,18 @@ def get_logs_dir() -> str:
     return logs_dir
 
 
-def get_config_path() -> str:
-    """Resolve the config file path cross-platform."""
-    env_config = os.environ.get("CONFIG_PATH")
-    if env_config:
-        return os.path.abspath(env_config)
+def get_dotenv_paths() -> List[str]:
+    """Return all candidate .env paths in order of resolution."""
     base_dir = get_base_dir()
-    return os.path.join(base_dir, "config", "config.ini")
-
-
-def get_all_config_watch_paths() -> List[str]:
-    """Return all possible config and .env file paths to watch for hot reloading."""
-    base_dir = get_base_dir()
-    paths = [
-        get_config_path(),
-        os.path.join(base_dir, "config", "config.ini"),
-        os.path.join(base_dir, "config", ".env"),
+    candidates = [
         os.path.join(base_dir, ".env"),
         os.path.join(os.getcwd(), ".env"),
-        os.path.join(os.getcwd(), "config", "config.ini"),
-        os.path.join(os.getcwd(), "config", ".env"),
-        "/app/config/config.ini",
-        "/app/config/.env",
         "/app/.env"
     ]
-    # Remove duplicates preserving order
     seen = set()
     result = []
-    for p in paths:
-        norm = os.path.normpath(p)
+    for c in candidates:
+        norm = os.path.normpath(c)
         if norm not in seen:
             seen.add(norm)
             result.append(norm)
@@ -118,10 +100,9 @@ def get_all_config_watch_paths() -> List[str]:
 
 
 def load_dotenv() -> None:
-    """Load key-value pairs from all candidate .env files into os.environ."""
-    candidates = get_all_config_watch_paths()
-    for path in candidates:
-        if path.endswith(".env") and os.path.isfile(path):
+    """Parse .env files into os.environ (ignoring comments, empty values, and placeholders)."""
+    for path in get_dotenv_paths():
+        if os.path.isfile(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     for line in f:
@@ -131,9 +112,6 @@ def load_dotenv() -> None:
                         key, val = line.split("=", 1)
                         key = key.strip()
                         val = val.strip().strip("'\"")
-                        # Skip placeholders
-                        if val in ("your_phpsessid_here", "#teszt"):
-                            continue
                         if key:
                             os.environ[key] = val
                             os.environ[key.upper()] = val
@@ -141,110 +119,72 @@ def load_dotenv() -> None:
                 logging.warning(f"Could not read .env file at {path}: {e}")
 
 
-def get_env_or_config(key: str, section: Optional[configparser.SectionProxy] = None) -> str:
-    """
-    Get setting with priority:
-    1. config.ini section value (if present and not placeholder)
-    2. Environment variable (e.g. COOKIE or SMG_COOKIE, if present and not placeholder)
-    3. DEFAULT_CONFIG fallback
-    """
-    # 1. Check config.ini first
-    if section is not None:
-        val = section.get(key, None)
-        if val is not None and val.strip() != "" and val.strip() not in ("your_phpsessid_here", "#teszt"):
-            return val.strip()
-
-    # 2. Check environment variables
-    env_val = os.environ.get(key.upper()) or os.environ.get(f"SMG_{key.upper()}") or os.environ.get(key)
-    if env_val is not None and env_val.strip() != "" and env_val.strip() not in ("your_phpsessid_here", "#teszt"):
-        return env_val.strip()
-
-    # 3. Check config.ini even if placeholder as fallback
-    if section is not None:
-        val = section.get(key, None)
-        if val is not None and val.strip() != "":
-            return val.strip()
-
-    return str(DEFAULT_CONFIG.get(key, ""))
+def get_setting(key: str) -> str:
+    """Get setting from environment variables or DEFAULT_CONFIG fallback."""
+    upper_key = key.upper()
+    val = os.environ.get(upper_key) or os.environ.get(f"SMG_{upper_key}") or os.environ.get(key.lower())
+    if val is not None and val.strip() != "":
+        return val.strip()
+    return str(DEFAULT_CONFIG.get(upper_key, ""))
 
 
 class BotConfig:
-    """Holds parsed and validated bot configuration with env and config.ini support."""
+    """Holds parsed and validated bot configuration from .env / environment variables."""
 
-    def __init__(self, raw_config: Optional[configparser.SectionProxy] = None):
-        self.raw = raw_config
-
+    def __init__(self):
         # Authentication
-        self.cookie_value: str = get_env_or_config("cookie", raw_config)
+        self.cookie_value: str = get_setting("COOKIE")
         self.cookie: Dict[str, str] = {"PHPSESSID": self.cookie_value}
 
         # Giveaway Settings
-        self.pinned_games: int = int(get_env_or_config("pinned_games", raw_config))
-        self.gift_type: str = get_env_or_config("gift_type", raw_config)
-        self.min_points: int = int(get_env_or_config("min_points", raw_config))
+        self.pinned_games: int = int(get_setting("PINNED_GAMES"))
+        self.gift_type: str = get_setting("GIFT_TYPE")
+        self.min_points: int = int(get_setting("MIN_POINTS"))
         
-        ignored_raw = get_env_or_config("ignored_words", raw_config)
+        ignored_raw = get_setting("IGNORED_WORDS")
         self.ignored_words: List[str] = [w.strip().lower() for w in ignored_raw.split(",") if w.strip()]
 
         # Behavior & Timing
-        self.max_entries_per_session: int = int(get_env_or_config("max_entries_per_session", raw_config))
-        self.base_sleep_time: int = int(get_env_or_config("base_sleep_time", raw_config))
-        self.sleep_time_no_games: int = int(get_env_or_config("sleep_time_no_games", raw_config))
-        self.sleep_time_no_points: int = int(get_env_or_config("sleep_time_no_points", raw_config))
-        self.min_request_interval: float = float(get_env_or_config("min_request_interval", raw_config))
-        self.max_consecutive_errors: int = int(get_env_or_config("max_consecutive_errors", raw_config))
+        self.max_entries_per_session: int = int(get_setting("MAX_ENTRIES_PER_SESSION"))
+        self.base_sleep_time: int = int(get_setting("BASE_SLEEP_TIME"))
+        self.sleep_time_no_games: int = int(get_setting("SLEEP_TIME_NO_GAMES"))
+        self.sleep_time_no_points: int = int(get_setting("SLEEP_TIME_NO_POINTS"))
+        self.min_request_interval: float = float(get_setting("MIN_REQUEST_INTERVAL"))
+        self.max_consecutive_errors: int = int(get_setting("MAX_CONSECUTIVE_ERRORS"))
 
         # Special Mode
-        cycle_str = get_env_or_config("special_mode_cycle", raw_config).lower()
+        cycle_str = get_setting("SPECIAL_MODE_CYCLE").lower()
         self.special_mode_cycle_enabled: bool = cycle_str in ("true", "1", "yes")
 
-        raw_stages = get_env_or_config("special_mode_stages", raw_config).split(",")
+        raw_stages = get_setting("SPECIAL_MODE_STAGES").split(",")
         self.special_mode_stages: List[str] = [s.strip() for s in raw_stages if s.strip() in SPECIAL_MODE_URLS]
         if not self.special_mode_stages:
             self.special_mode_stages = ["Wishlist", "Group", "Recommended", "Copies", "DLC"]
 
         # Discord
-        self.discord_webhook: str = get_env_or_config("discord_webhook", raw_config)
-        self.discord_notification_time: str = get_env_or_config("discord_notification_time", raw_config)
-        self.discord_mention_stats: bool = get_env_or_config("discord_mention_stats", raw_config).lower() in ("true", "1", "yes")
-        self.discord_mention_wins: bool = get_env_or_config("discord_mention_wins", raw_config).lower() in ("true", "1", "yes")
-        self.discord_mention_alerts: bool = get_env_or_config("discord_mention_alerts", raw_config).lower() in ("true", "1", "yes")
+        self.discord_webhook: str = get_setting("DISCORD_WEBHOOK")
+        self.discord_notification_time: str = get_setting("DISCORD_NOTIFICATION_TIME")
+        self.discord_mention_stats: bool = get_setting("DISCORD_MENTION_STATS").lower() in ("true", "1", "yes")
+        self.discord_mention_wins: bool = get_setting("DISCORD_MENTION_WINS").lower() in ("true", "1", "yes")
+        self.discord_mention_alerts: bool = get_setting("DISCORD_MENTION_ALERTS").lower() in ("true", "1", "yes")
 
         # Timezone & Logging
-        self.timezone_str: str = get_env_or_config("timezone", raw_config)
+        self.timezone_str: str = get_setting("TIMEZONE")
         try:
             self.timezone = ZoneInfo(self.timezone_str)
         except Exception:
             self.timezone = ZoneInfo("Europe/Budapest")
             self.timezone_str = "Europe/Budapest"
 
-        self.log_level_str: str = get_env_or_config("log_level", raw_config).upper()
-        self.log_to_file: bool = get_env_or_config("log_to_file", raw_config).lower() in ("true", "1", "yes")
-        self.log_to_console: bool = get_env_or_config("log_to_console", raw_config).lower() in ("true", "1", "yes")
+        self.log_level_str: str = get_setting("LOG_LEVEL").upper()
+        self.log_to_file: bool = get_setting("LOG_TO_FILE").lower() in ("true", "1", "yes")
+        self.log_to_console: bool = get_setting("LOG_TO_CONSOLE").lower() in ("true", "1", "yes")
 
 
-def load_config(config_path: Optional[str] = None) -> BotConfig:
-    """Load configuration from environment, .env file, and/or config.ini."""
+def load_config() -> BotConfig:
+    """Load and validate configuration from .env / environment."""
     load_dotenv()
-
-    if config_path is None:
-        config_path = get_config_path()
-
-    section = None
-    # Check config_path and alternative candidates
-    candidate_inies = [config_path, os.path.join(get_base_dir(), "config", "config.ini"), "/app/config/config.ini"]
-    for ini_path in candidate_inies:
-        if os.path.isfile(ini_path):
-            try:
-                config = configparser.ConfigParser(defaults=DEFAULT_CONFIG)
-                config.read(ini_path, encoding="utf-8")
-                if "DEFAULT" in config:
-                    section = config["DEFAULT"]
-                    break
-            except Exception as e:
-                logging.warning(f"Error parsing config file at {ini_path}: {e}")
-
-    bot_config = BotConfig(section)
+    bot_config = BotConfig()
     validate_bot_config(bot_config)
     return bot_config
 
@@ -253,19 +193,19 @@ def validate_bot_config(config: BotConfig) -> None:
     """Validate critical configuration values."""
     cookie = config.cookie_value
     if not cookie or cookie in ("#teszt", "your_phpsessid_here"):
-        logging.error("Missing or placeholder 'cookie' (PHPSESSID) in configuration.")
-        raise ValueError("Missing or placeholder 'cookie'. Please specify a valid PHPSESSID in .env or config.ini.")
+        logging.error("Missing or placeholder 'COOKIE' (PHPSESSID) in configuration.")
+        raise ValueError("Missing or placeholder 'COOKIE'. Please specify a valid PHPSESSID in .env.")
 
     if config.min_points < 0:
-        raise ValueError("min_points must be >= 0")
+        raise ValueError("MIN_POINTS must be >= 0")
     if config.base_sleep_time < 1:
-        raise ValueError("base_sleep_time must be >= 1")
+        raise ValueError("BASE_SLEEP_TIME must be >= 1")
     if config.min_request_interval < 0.1:
-        raise ValueError("min_request_interval must be >= 0.1")
+        raise ValueError("MIN_REQUEST_INTERVAL must be >= 0.1")
 
     valid_gift_types = list(FILTER_URLS.keys()) + ["Special Mode"]
     if config.gift_type not in valid_gift_types:
-        raise ValueError(f"Invalid gift_type '{config.gift_type}'. Must be one of {valid_gift_types}")
+        raise ValueError(f"Invalid GIFT_TYPE '{config.gift_type}'. Must be one of {valid_gift_types}")
 
     if config.discord_webhook and not config.discord_webhook.startswith("https://discord.com/api/webhooks/"):
         logging.warning(f"Discord webhook URL '{config.discord_webhook}' appears to be invalid.")

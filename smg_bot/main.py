@@ -6,7 +6,7 @@ import logging
 import schedule
 from typing import Optional
 
-from smg_bot.config import BotConfig, load_config, get_logs_dir, get_config_path, get_all_config_watch_paths, load_dotenv
+from smg_bot.config import BotConfig, load_config, get_logs_dir, get_dotenv_paths, load_dotenv
 from smg_bot.client import SteamGiftsClient
 from smg_bot.giveaway_logic import GiveawayManager, get_sleep_time, interruptible_sleep, log
 from smg_bot.notifier import Statistics, DiscordNotifier
@@ -59,18 +59,17 @@ def wait_for_cookie_hot_reload(
 ) -> Optional[BotConfig]:
     """
     Standby IDLE loop when authentication fails or initial config is missing.
-    Watches all candidate config and .env files for changes every 5 seconds,
-    reloads, and resumes automatically without container restart.
+    Watches .env files for changes every 5 seconds, reloads, and resumes automatically without container restart.
     Emits a heartbeat every 10 minutes to maintain Docker healthcheck status.
     """
     if notifier and notifier.webhook_url:
         notifier.send_cookie_expired_notification()
 
     log("🚨 Authentication needed. Entering IDLE standby mode...", "red")
-    log("💡 Paste your PHPSESSID into .env (COOKIE=...) or config/config.ini - the bot will automatically detect it and start!", "cyan")
+    log("💡 Paste your PHPSESSID into .env (COOKIE=...) - the bot will automatically detect it and start!", "cyan")
 
-    watch_paths = get_all_config_watch_paths()
-    last_mtimes = {p: os.path.getmtime(p) if os.path.isfile(p) else 0 for p in watch_paths}
+    dotenv_paths = get_dotenv_paths()
+    last_mtimes = {p: os.path.getmtime(p) if os.path.isfile(p) else 0 for p in dotenv_paths}
     last_heartbeat_time = time.time()
 
     while not shutdown_requested:
@@ -78,12 +77,12 @@ def wait_for_cookie_hot_reload(
 
         # Emit IDLE heartbeat every 10 minutes (600s) for Docker healthcheck
         if time.time() - last_heartbeat_time >= 600:
-            log("💤 Standby: Still waiting for valid COOKIE in .env or config.ini...", "grey")
+            log("💤 Standby: Still waiting for valid COOKIE in .env...", "grey")
             last_heartbeat_time = time.time()
 
-        # Check if any candidate file was modified or newly created
+        # Check if any candidate .env file was modified or newly created
         changed_file = None
-        for p in watch_paths:
+        for p in dotenv_paths:
             curr_mtime = os.path.getmtime(p) if os.path.isfile(p) else 0
             if curr_mtime > last_mtimes.get(p, 0):
                 changed_file = p
@@ -93,11 +92,6 @@ def wait_for_cookie_hot_reload(
         if changed_file:
             log(f"🔍 File change detected in '{changed_file}'! Testing updated credentials...", "cyan")
             try:
-                # Remove stale cookie from environ before reloading
-                for env_key in ("COOKIE", "SMG_COOKIE", "cookie"):
-                    if env_key in os.environ and os.environ[env_key] in ("your_phpsessid_here", "#teszt", ""):
-                        os.environ.pop(env_key, None)
-
                 load_dotenv()
                 new_config = load_config()
 
@@ -125,8 +119,7 @@ def wait_for_cookie_hot_reload(
 
             except Exception as e:
                 log(f"⏳ Verification failed ({e}). Remaining in IDLE standby mode...", "yellow")
-                # Update mtimes so we don't loop unnecessarily until the next file edit
-                for p in watch_paths:
+                for p in dotenv_paths:
                     last_mtimes[p] = os.path.getmtime(p) if os.path.isfile(p) else 0
 
     return None

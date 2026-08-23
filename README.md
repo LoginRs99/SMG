@@ -1,21 +1,14 @@
-# SMG
+# SMG Bot
 
 Automatizációs bot Docker és helyi környezetre.
 
 ## Használat Dockerrel
 
-1. Konfiguráció létrehozása (választható .env vagy config.ini):
-
-   **.env fájl használata (legegyszerűbb):**
+1. Konfiguráció létrehozása:
    ```bash
    cp .env.example .env
    ```
    Töltsd ki a `.env` fájlban a `COOKIE` értékét.
-
-   *VAGY config.ini használata:*
-   ```bash
-   cp config/config.ini.example config/config.ini
-   ```
 
 2. Indítás:
    ```bash
