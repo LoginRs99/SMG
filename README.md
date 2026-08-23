@@ -4,11 +4,18 @@ Automatizációs bot Docker és helyi környezetre.
 
 ## Használat Dockerrel
 
-1. Konfiguráció létrehozása:
+1. Konfiguráció létrehozása (választható .env vagy config.ini):
+
+   **.env fájl használata (legegyszerűbb):**
+   ```bash
+   cp .env.example .env
+   ```
+   Töltsd ki a `.env` fájlban a `COOKIE` értékét.
+
+   *VAGY config.ini használata:*
    ```bash
    cp config/config.ini.example config/config.ini
    ```
-   Töltsd ki a `config/config.ini` fájlt a szükséges adatokkal.
 
 2. Indítás:
    ```bash

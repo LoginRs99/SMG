@@ -1,7 +1,7 @@
 import os
 import configparser
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -61,6 +61,30 @@ SPECIAL_MODE_URLS: Dict[str, str] = {
 }
 
 
+def load_dotenv(dotenv_path: Optional[str] = None) -> None:
+    """Load key-value pairs from .env file into os.environ (without external dependencies)."""
+    if dotenv_path is None:
+        dotenv_path = os.path.join(get_base_dir(), ".env")
+
+    if not os.path.isfile(dotenv_path):
+        return
+
+    try:
+        with open(dotenv_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().strip("'\"")
+                # Do not overwrite already explicitly set system env vars
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except Exception as e:
+        logging.warning(f"Could not read .env file at {dotenv_path}: {e}")
+
+
 def get_base_dir() -> str:
     """Resolve the base application directory across platforms."""
     env_base = os.environ.get("APP_DIR")
@@ -91,128 +115,127 @@ def get_config_path() -> str:
     return os.path.join(base_dir, "config", "config.ini")
 
 
-class BotConfig:
-    """Holds parsed and validated bot configuration."""
+def get_env_or_config(key: str, section: Optional[configparser.SectionProxy] = None) -> str:
+    """
+    Get setting with priority:
+    1. Environment variable (e.g. COOKIE or SMG_COOKIE)
+    2. config.ini section value
+    3. DEFAULT_CONFIG fallback
+    """
+    # Check uppercase and SMG_ prefix
+    env_val = os.environ.get(key.upper()) or os.environ.get(f"SMG_{key.upper()}")
+    if env_val is not None and env_val.strip() != "":
+        return env_val.strip()
 
-    def __init__(self, raw_config: configparser.SectionProxy):
+    if section is not None:
+        val = section.get(key, None)
+        if val is not None and val.strip() != "":
+            return val.strip()
+
+    return str(DEFAULT_CONFIG.get(key, ""))
+
+
+class BotConfig:
+    """Holds parsed and validated bot configuration with env and config.ini support."""
+
+    def __init__(self, raw_config: Optional[configparser.SectionProxy] = None):
         self.raw = raw_config
 
         # Authentication
-        self.cookie_value: str = raw_config.get("cookie", DEFAULT_CONFIG["cookie"]).strip()
+        self.cookie_value: str = get_env_or_config("cookie", raw_config)
         self.cookie: Dict[str, str] = {"PHPSESSID": self.cookie_value}
 
         # Giveaway Settings
-        self.pinned_games: int = raw_config.getint("pinned_games", int(DEFAULT_CONFIG["pinned_games"]))
-        self.gift_type: str = raw_config.get("gift_type", DEFAULT_CONFIG["gift_type"])
-        self.min_points: int = raw_config.getint("min_points", int(DEFAULT_CONFIG["min_points"]))
+        self.pinned_games: int = int(get_env_or_config("pinned_games", raw_config))
+        self.gift_type: str = get_env_or_config("gift_type", raw_config)
+        self.min_points: int = int(get_env_or_config("min_points", raw_config))
         
-        ignored_raw = raw_config.get("ignored_words", DEFAULT_CONFIG["ignored_words"])
+        ignored_raw = get_env_or_config("ignored_words", raw_config)
         self.ignored_words: List[str] = [w.strip().lower() for w in ignored_raw.split(",") if w.strip()]
 
         # Behavior & Timing
-        self.max_entries_per_session: int = raw_config.getint("max_entries_per_session", int(DEFAULT_CONFIG["max_entries_per_session"]))
-        self.base_sleep_time: int = raw_config.getint("base_sleep_time", int(DEFAULT_CONFIG["base_sleep_time"]))
-        self.sleep_time_no_games: int = raw_config.getint("sleep_time_no_games", int(DEFAULT_CONFIG["sleep_time_no_games"]))
-        self.sleep_time_no_points: int = raw_config.getint("sleep_time_no_points", int(DEFAULT_CONFIG["sleep_time_no_points"]))
-        self.min_request_interval: float = raw_config.getfloat("min_request_interval", float(DEFAULT_CONFIG["min_request_interval"]))
-        self.max_consecutive_errors: int = raw_config.getint("max_consecutive_errors", int(DEFAULT_CONFIG["max_consecutive_errors"]))
+        self.max_entries_per_session: int = int(get_env_or_config("max_entries_per_session", raw_config))
+        self.base_sleep_time: int = int(get_env_or_config("base_sleep_time", raw_config))
+        self.sleep_time_no_games: int = int(get_env_or_config("sleep_time_no_games", raw_config))
+        self.sleep_time_no_points: int = int(get_env_or_config("sleep_time_no_points", raw_config))
+        self.min_request_interval: float = float(get_env_or_config("min_request_interval", raw_config))
+        self.max_consecutive_errors: int = int(get_env_or_config("max_consecutive_errors", raw_config))
 
         # Special Mode
-        self.special_mode_cycle_enabled: bool = raw_config.getboolean("special_mode_cycle", DEFAULT_CONFIG["special_mode_cycle"].lower() == "true")
-        raw_stages = raw_config.get("special_mode_stages", DEFAULT_CONFIG["special_mode_stages"]).split(",")
+        cycle_str = get_env_or_config("special_mode_cycle", raw_config).lower()
+        self.special_mode_cycle_enabled: bool = cycle_str in ("true", "1", "yes")
+
+        raw_stages = get_env_or_config("special_mode_stages", raw_config).split(",")
         self.special_mode_stages: List[str] = [s.strip() for s in raw_stages if s.strip() in SPECIAL_MODE_URLS]
         if not self.special_mode_stages:
             self.special_mode_stages = ["Wishlist", "Group", "Recommended", "Copies", "DLC"]
 
         # Discord
-        self.discord_webhook: str = raw_config.get("discord_webhook", DEFAULT_CONFIG["discord_webhook"]).strip()
-        self.discord_notification_time: str = raw_config.get("discord_notification_time", DEFAULT_CONFIG["discord_notification_time"]).strip()
-        self.discord_mention_stats: bool = raw_config.getboolean("discord_mention_stats", DEFAULT_CONFIG["discord_mention_stats"].lower() == "true")
-        self.discord_mention_wins: bool = raw_config.getboolean("discord_mention_wins", DEFAULT_CONFIG["discord_mention_wins"].lower() == "true")
-        self.discord_mention_alerts: bool = raw_config.getboolean("discord_mention_alerts", DEFAULT_CONFIG["discord_mention_alerts"].lower() == "true")
+        self.discord_webhook: str = get_env_or_config("discord_webhook", raw_config)
+        self.discord_notification_time: str = get_env_or_config("discord_notification_time", raw_config)
+        self.discord_mention_stats: bool = get_env_or_config("discord_mention_stats", raw_config).lower() in ("true", "1", "yes")
+        self.discord_mention_wins: bool = get_env_or_config("discord_mention_wins", raw_config).lower() in ("true", "1", "yes")
+        self.discord_mention_alerts: bool = get_env_or_config("discord_mention_alerts", raw_config).lower() in ("true", "1", "yes")
 
         # Timezone & Logging
-        self.timezone_str: str = raw_config.get("timezone", DEFAULT_CONFIG["timezone"]).strip()
+        self.timezone_str: str = get_env_or_config("timezone", raw_config)
         try:
             self.timezone = ZoneInfo(self.timezone_str)
         except Exception:
             self.timezone = ZoneInfo("Europe/Budapest")
             self.timezone_str = "Europe/Budapest"
 
-        self.log_level_str: str = raw_config.get("log_level", DEFAULT_CONFIG["log_level"]).upper()
-        self.log_to_file: bool = raw_config.getboolean("log_to_file", DEFAULT_CONFIG["log_to_file"].lower() == "true")
-        self.log_to_console: bool = raw_config.getboolean("log_to_console", DEFAULT_CONFIG["log_to_console"].lower() == "true")
+        self.log_level_str: str = get_env_or_config("log_level", raw_config).upper()
+        self.log_to_file: bool = get_env_or_config("log_to_file", raw_config).lower() in ("true", "1", "yes")
+        self.log_to_console: bool = get_env_or_config("log_to_console", raw_config).lower() in ("true", "1", "yes")
 
 
-def load_config(config_path: str = None) -> BotConfig:
-    """Load, validate, and return BotConfig."""
+def load_config(config_path: Optional[str] = None) -> BotConfig:
+    """Load configuration from environment, .env file, and/or config.ini."""
+    # 1. Load .env file if present
+    load_dotenv()
+
     if config_path is None:
         config_path = get_config_path()
 
-    if not os.path.exists(config_path):
-        create_default_config_file(config_path)
-        raise FileNotFoundError(f"Configuration file created at {config_path}. Please configure your cookie.")
+    section = None
+    if os.path.exists(config_path):
+        config = configparser.ConfigParser(defaults=DEFAULT_CONFIG)
+        config.read(config_path, encoding="utf-8")
+        section = config["DEFAULT"]
 
-    config = configparser.ConfigParser(defaults=DEFAULT_CONFIG)
-    config.read(config_path, encoding="utf-8")
-    section = config["DEFAULT"]
+    # If cookie is not in env or config file
+    cookie_check = os.environ.get("COOKIE") or os.environ.get("SMG_COOKIE")
+    if not cookie_check and (section is None or not section.get("cookie")):
+        if not os.path.exists(config_path):
+            create_default_config_file(config_path)
+            raise FileNotFoundError(f"Configuration file created at {config_path}. Please configure your cookie in config.ini or .env.")
 
-    validate_config(section)
-    return BotConfig(section)
+    bot_config = BotConfig(section)
+    validate_bot_config(bot_config)
+    return bot_config
 
 
-def validate_config(section: configparser.SectionProxy) -> None:
+def validate_bot_config(config: BotConfig) -> None:
     """Validate critical configuration values."""
-    cookie = section.get("cookie", "").strip()
-    if not cookie or cookie == "#teszt" or cookie == "your_phpsessid_here":
-        logging.error("Missing or placeholder 'cookie' (PHPSESSID) in config.")
-        raise ValueError("Missing or placeholder 'cookie' in config. Please specify a valid PHPSESSID.")
+    cookie = config.cookie_value
+    if not cookie or cookie in ("#teszt", "your_phpsessid_here"):
+        logging.error("Missing or placeholder 'cookie' (PHPSESSID) in configuration.")
+        raise ValueError("Missing or placeholder 'cookie'. Please specify a valid PHPSESSID in .env or config.ini.")
 
-    # Validate numeric values
-    numeric_fields = {
-        "min_points": 0,
-        "pinned_games": 0,
-        "base_sleep_time": 1,
-        "sleep_time_no_games": 1,
-        "sleep_time_no_points": 1,
-        "max_consecutive_errors": 1,
-        "max_entries_per_session": 1,
-    }
-    for field, min_val in numeric_fields.items():
-        try:
-            val = int(section.get(field, DEFAULT_CONFIG[field]))
-            if val < min_val:
-                raise ValueError(f"Value for '{field}' must be >= {min_val}")
-        except ValueError as e:
-            logging.error(f"Invalid integer for '{field}': {e}")
-            raise ValueError(f"Invalid integer for '{field}'") from e
+    if config.min_points < 0:
+        raise ValueError("min_points must be >= 0")
+    if config.base_sleep_time < 1:
+        raise ValueError("base_sleep_time must be >= 1")
+    if config.min_request_interval < 0.1:
+        raise ValueError("min_request_interval must be >= 0.1")
 
-    try:
-        val_float = float(section.get("min_request_interval", DEFAULT_CONFIG["min_request_interval"]))
-        if val_float < 0.1:
-            raise ValueError("min_request_interval must be >= 0.1")
-    except ValueError as e:
-        logging.error(f"Invalid float for 'min_request_interval': {e}")
-        raise ValueError("Invalid float for 'min_request_interval'") from e
-
-    # Validate timezone
-    tz_str = section.get("timezone", DEFAULT_CONFIG["timezone"])
-    try:
-        ZoneInfo(tz_str)
-    except Exception as e:
-        logging.error(f"Invalid timezone string in config: {tz_str}. Error: {e}")
-        raise ValueError(f"Invalid timezone string: {tz_str}") from e
-
-    # Validate gift_type
     valid_gift_types = list(FILTER_URLS.keys()) + ["Special Mode"]
-    gift_type_val = section.get("gift_type", DEFAULT_CONFIG["gift_type"])
-    if gift_type_val not in valid_gift_types:
-        logging.error(f"Invalid gift_type '{gift_type_val}'. Must be one of {valid_gift_types}")
-        raise ValueError(f"Invalid gift_type '{gift_type_val}'")
+    if config.gift_type not in valid_gift_types:
+        raise ValueError(f"Invalid gift_type '{config.gift_type}'. Must be one of {valid_gift_types}")
 
-    webhook_url = section.get("discord_webhook", "").strip()
-    if webhook_url and not webhook_url.startswith("https://discord.com/api/webhooks/"):
-        logging.warning(f"Discord webhook URL '{webhook_url}' appears to be invalid.")
+    if config.discord_webhook and not config.discord_webhook.startswith("https://discord.com/api/webhooks/"):
+        logging.warning(f"Discord webhook URL '{config.discord_webhook}' appears to be invalid.")
 
 
 def create_default_config_file(config_path: str) -> None:

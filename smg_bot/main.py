@@ -6,7 +6,7 @@ import logging
 import schedule
 from typing import Optional
 
-from smg_bot.config import BotConfig, load_config, get_logs_dir, get_config_path
+from smg_bot.config import BotConfig, load_config, get_logs_dir, get_config_path, get_base_dir, load_dotenv
 from smg_bot.client import SteamGiftsClient
 from smg_bot.giveaway_logic import GiveawayManager, get_sleep_time, interruptible_sleep, log
 from smg_bot.notifier import Statistics, DiscordNotifier
@@ -58,26 +58,32 @@ def wait_for_cookie_hot_reload(
     notifier: DiscordNotifier
 ) -> BotConfig:
     """
-    Standby IDLE loop when authentication fails (ENHANCEMENT 2: Zero-crash Hot-Reload).
-    Watches config.ini for changes, reloads, and resumes automatically without container restart.
+    Standby IDLE loop when authentication fails (Zero-crash Hot-Reload).
+    Watches config.ini or .env for changes, reloads, and resumes automatically without container restart.
     """
     notifier.send_cookie_expired_notification()
     log("🚨 Authentication failed (cookie invalid/expired). Entering IDLE standby mode...", "red")
-    log("💡 Paste the new PHPSESSID into config.ini - the bot will automatically hot-reload and resume!", "cyan")
+    log("💡 Paste the new PHPSESSID into .env or config.ini - the bot will automatically hot-reload and resume!", "cyan")
 
     config_path = get_config_path()
-    last_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+    dotenv_path = os.path.join(get_base_dir(), ".env")
+
+    last_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+    last_dotenv_mtime = os.path.getmtime(dotenv_path) if os.path.exists(dotenv_path) else 0
 
     while not shutdown_requested:
         time.sleep(15)
 
-        if not os.path.exists(config_path):
-            continue
+        curr_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+        curr_dotenv_mtime = os.path.getmtime(dotenv_path) if os.path.exists(dotenv_path) else 0
 
-        try:
-            current_mtime = os.path.getmtime(config_path)
-            if current_mtime > last_mtime:
-                log("🔍 Config file change detected! Checking updated configuration...", "cyan")
+        if curr_config_mtime > last_config_mtime or curr_dotenv_mtime > last_dotenv_mtime:
+            log("🔍 Configuration change detected! Testing updated credentials...", "cyan")
+            try:
+                # Reload env file into os.environ
+                if os.path.exists(dotenv_path):
+                    load_dotenv(dotenv_path)
+
                 new_config = load_config(config_path)
 
                 # Test new credentials
@@ -94,9 +100,10 @@ def wait_for_cookie_hot_reload(
                 notifier.send_cookie_recovered_notification()
                 return new_config
 
-        except Exception as e:
-            log(f"⏳ Cookie test failed ({e}). Remaining in IDLE standby mode...", "yellow")
-            last_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+            except Exception as e:
+                log(f"⏳ Cookie verification failed ({e}). Remaining in IDLE standby mode...", "yellow")
+                last_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+                last_dotenv_mtime = os.path.getmtime(dotenv_path) if os.path.exists(dotenv_path) else 0
 
     return config
 
@@ -105,7 +112,7 @@ def run_bot() -> None:
     """Main application lifecycle runner."""
     global active_giveaway_manager
 
-    # 1. Load configuration
+    # 1. Load configuration (from .env, environment, or config.ini)
     try:
         config = load_config()
     except FileNotFoundError as e:
@@ -179,10 +186,8 @@ def run_bot() -> None:
             consecutive_errors += 1
             log(f"ERROR: {str(e)}", "red")
 
-            # ENHANCEMENT 3: Exponential backoff with jitter on consecutive errors
             if consecutive_errors >= config.max_consecutive_errors:
                 error_backoff_cycle += 1
-                # 300s (5m) -> 600s (10m) -> 1200s (20m) -> 2400s (40m) -> max 7200s (2h)
                 backoff_base = min(7200.0, 300.0 * (2 ** min(error_backoff_cycle - 1, 4)))
                 backoff_sleep = get_sleep_time(backoff_base)
 
