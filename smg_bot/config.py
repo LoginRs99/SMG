@@ -62,27 +62,36 @@ SPECIAL_MODE_URLS: Dict[str, str] = {
 
 
 def load_dotenv(dotenv_path: Optional[str] = None) -> None:
-    """Load key-value pairs from .env file into os.environ (without external dependencies)."""
-    if dotenv_path is None:
-        dotenv_path = os.path.join(get_base_dir(), ".env")
+    """Load key-value pairs from .env file into os.environ."""
+    candidates = []
+    if dotenv_path:
+        candidates.append(dotenv_path)
+    else:
+        base_dir = get_base_dir()
+        candidates.extend([
+            os.path.join(base_dir, ".env"),
+            os.path.join(os.getcwd(), ".env"),
+            "/app/.env",
+            os.path.join(base_dir, "config", ".env")
+        ])
 
-    if not os.path.isfile(dotenv_path):
-        return
-
-    try:
-        with open(dotenv_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, val = line.split("=", 1)
-                key = key.strip()
-                val = val.strip().strip("'\"")
-                # Do not overwrite already explicitly set system env vars
-                if key and key not in os.environ:
-                    os.environ[key] = val
-    except Exception as e:
-        logging.warning(f"Could not read .env file at {dotenv_path}: {e}")
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        key, val = line.split("=", 1)
+                        key = key.strip()
+                        val = val.strip().strip("'\"")
+                        if key:
+                            os.environ[key] = val
+                            os.environ[key.upper()] = val
+            except Exception as e:
+                logging.warning(f"Could not read .env file at {path}: {e}")
+            break
 
 
 def get_base_dir() -> str:
@@ -122,8 +131,7 @@ def get_env_or_config(key: str, section: Optional[configparser.SectionProxy] = N
     2. config.ini section value
     3. DEFAULT_CONFIG fallback
     """
-    # Check uppercase and SMG_ prefix
-    env_val = os.environ.get(key.upper()) or os.environ.get(f"SMG_{key.upper()}")
+    env_val = os.environ.get(key.upper()) or os.environ.get(f"SMG_{key.upper()}") or os.environ.get(key)
     if env_val is not None and env_val.strip() != "":
         return env_val.strip()
 
@@ -192,7 +200,6 @@ class BotConfig:
 
 def load_config(config_path: Optional[str] = None) -> BotConfig:
     """Load configuration from environment, .env file, and/or config.ini."""
-    # 1. Load .env file if present
     load_dotenv()
 
     if config_path is None:
@@ -202,14 +209,8 @@ def load_config(config_path: Optional[str] = None) -> BotConfig:
     if os.path.exists(config_path):
         config = configparser.ConfigParser(defaults=DEFAULT_CONFIG)
         config.read(config_path, encoding="utf-8")
-        section = config["DEFAULT"]
-
-    # If cookie is not in env or config file
-    cookie_check = os.environ.get("COOKIE") or os.environ.get("SMG_COOKIE")
-    if not cookie_check and (section is None or not section.get("cookie")):
-        if not os.path.exists(config_path):
-            create_default_config_file(config_path)
-            raise FileNotFoundError(f"Configuration file created at {config_path}. Please configure your cookie in config.ini or .env.")
+        if "DEFAULT" in config:
+            section = config["DEFAULT"]
 
     bot_config = BotConfig(section)
     validate_bot_config(bot_config)
