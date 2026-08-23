@@ -22,19 +22,19 @@ def log(string: str, color: str) -> None:
 
 
 def get_sleep_time(base_time: float) -> float:
-    """Get randomized sleep time with +-20% jitter (FROZEN)."""
+    """Get randomized sleep time with +-20% jitter."""
     variance = base_time * 0.2
-    return base_time + random.uniform(-variance, variance)
+    return max(1.0, base_time + random.uniform(-variance, variance))
 
 
 def human_delay(base: float = 2.0, variance: float = 1.5) -> None:
-    """Add a human-like random delay (FROZEN)."""
+    """Add a human-like random delay."""
     delay = base + random.uniform(0, variance)
     time.sleep(delay)
 
 
 def should_skip_randomly(probability: float = 0.15) -> bool:
-    """Randomly skip some games to appear human-like (FROZEN: 15%)."""
+    """Randomly skip some games to appear human-like (15%)."""
     return random.random() < probability
 
 
@@ -47,7 +47,7 @@ def interruptible_sleep(
     """
     Sleep for duration_seconds while emitting periodic heartbeat log lines
     every heartbeat_interval seconds. This keeps the log file active so the
-    Docker healthcheck does not misfire during long 4-hour sleep cycles.
+    Docker healthcheck does not misfire during long sleep cycles.
     """
     start_time = time.time()
     end_time = start_time + duration_seconds
@@ -68,7 +68,7 @@ def interruptible_sleep(
 
 
 class WonCache:
-    """Local cache for previously won games to avoid doomed requests (APPROVED CHANGE 1)."""
+    """Local cache for previously won games to avoid doomed requests."""
 
     def __init__(self, cache_file: Optional[str] = None):
         if cache_file is None:
@@ -162,15 +162,25 @@ class GiveawayManager:
         log(f"💰 Current points: {self.points}, XSRF token updated.", "cyan")
 
     def sleep_if_not_enough_points(self) -> bool:
-        """Check if points are below min_points; if so, perform heartbeat sleep."""
+        """
+        Dynamically calculate sleep duration based on missing points (ENHANCEMENT 1).
+        SteamGifts awards ~20-25P per hour (~150s per point).
+        Clamped between 15 minutes (900s) and sleep_time_no_points (max 4h) with jitter.
+        """
         if self.points >= self.min_points:
             return False
-        sleep_duration = get_sleep_time(self.sleep_time_no_points)
-        log(f"📉 Points ({self.points}) below minimum ({self.min_points}). Sleeping for {int(sleep_duration/60)} minutes.", "yellow")
+
+        missing_points = max(1, self.min_points - self.points)
+        # Estimated regen time: ~150 seconds per point
+        estimated_regen_seconds = missing_points * 150
+        clamped_wait = max(900.0, min(float(self.sleep_time_no_points), float(estimated_regen_seconds)))
+        sleep_duration = get_sleep_time(clamped_wait)
+
+        log(f"📉 Points ({self.points}) below minimum ({self.min_points}). Missing {missing_points}P. Dynamic sleep: {int(sleep_duration/60)}m.", "yellow")
         interruptible_sleep(
             sleep_duration,
             heartbeat_interval=600,
-            reason="insufficient points",
+            reason=f"point regen ({missing_points}P missing)",
             shutdown_check=lambda: self.shutdown_flag
         )
         return True
@@ -216,7 +226,7 @@ class GiveawayManager:
                     elif self.pinned == 1 and not is_pinned:
                         continue
 
-                    # APPROVED CHANGE 1: Local cache check before considering entry
+                    # Local cache check before considering entry
                     if self.won_cache.is_won(game_name):
                         log(f"🛡️ [WonCache] Skipping already-won game: {game_name}", "grey")
                         continue

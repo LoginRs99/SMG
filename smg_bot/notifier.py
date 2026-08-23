@@ -57,7 +57,7 @@ class Statistics:
 
 
 class NotifiedWinsStore:
-    """Persistent storage for announced wins to prevent duplicate Discord messages across restarts (APPROVED CHANGE 7)."""
+    """Persistent storage for announced wins to prevent duplicate Discord messages across restarts."""
 
     def __init__(self, store_file: Optional[str] = None):
         if store_file is None:
@@ -107,7 +107,7 @@ class DiscordNotifier:
         self.wins_store = NotifiedWinsStore()
 
     def send_win_notification(self, games: List[str]) -> None:
-        """Send notification when a giveaway is won (APPROVED CHANGE 7: opt-in @here & persistent deduplication)."""
+        """Send notification when a giveaway is won."""
         unnotified = self.wins_store.filter_unnotified(games)
         if not unnotified:
             logging.info("👀 No new unredeemed wins to announce.")
@@ -136,24 +136,25 @@ class DiscordNotifier:
             logging.error(f"Failed to send win webhook: {e}")
 
     def send_cookie_expired_notification(self) -> None:
-        """Send Discord alert when session cookie expires (APPROVED CHANGE 7)."""
+        """Send Discord alert when session cookie expires (Sent ONCE before entering IDLE mode)."""
         if not self.webhook_url:
             return
 
         mention_prefix = "@here " if self.config.discord_mention_alerts else ""
         payload = {
-            "content": f"{mention_prefix}🚨 **SteamGifts Bot STOPPED** 🚨",
+            "content": f"{mention_prefix}🚨 **SteamGifts Bot Auth Alert** 🚨",
             "embeds": [{
                 "title": "⛔ Cookie Expired / Invalid",
                 "description": (
-                    "The bot has shut down because the **PHPSESSID cookie** is no longer valid.\n\n"
-                    "**What to do:**\n"
+                    "The bot has entered **IDLE standby mode** because the **PHPSESSID cookie** is invalid or expired.\n\n"
+                    "**How to resume:**\n"
                     "1. Log in to [SteamGifts.com](https://www.steamgifts.com)\n"
                     "2. Copy your new `PHPSESSID` cookie\n"
-                    "3. Update `config.ini` and restart the bot"
+                    "3. Paste it into `config.ini`\n\n"
+                    "💡 *The bot will automatically detect the file change, reload the cookie, and resume without container restart!*"
                 ),
                 "color": 0xFF0000,
-                "footer": {"text": "Bot is offline until cookie is updated."},
+                "footer": {"text": "Bot is standing by for config.ini update."},
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }]
         }
@@ -163,8 +164,28 @@ class DiscordNotifier:
         except Exception as e:
             logging.error(f"Failed to send cookie expired webhook: {e}")
 
+    def send_cookie_recovered_notification(self) -> None:
+        """Send Discord alert when cookie is hot-reloaded and verified."""
+        if not self.webhook_url:
+            return
+
+        payload = {
+            "content": "✅ **SteamGifts Bot Resumed**",
+            "embeds": [{
+                "title": "🟢 Authentication Restored",
+                "description": "New `PHPSESSID` cookie successfully verified! The bot has resumed operations.",
+                "color": 0x00FF00,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }]
+        }
+        try:
+            requests.post(self.webhook_url, json=payload, timeout=10)
+            logging.info("Sent recovery notification to Discord.")
+        except Exception as e:
+            logging.error(f"Failed to send recovery webhook: {e}")
+
     def send_daily_stats(self, stats: Statistics, giveaway_mgr_points: Any) -> None:
-        """Send daily statistics summary on a background thread (APPROVED CHANGE 7)."""
+        """Send daily statistics summary on a background thread."""
         if not self.webhook_url:
             logging.debug("Discord webhook URL not configured, skipping stats report.")
             return

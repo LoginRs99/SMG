@@ -8,7 +8,6 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo
 
 # Single source of truth for all configuration defaults
-# Frozen & proven production defaults
 DEFAULT_CONFIG: Dict[str, Any] = {
     # Authentication
     "cookie": "",
@@ -24,15 +23,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "sleep_time_no_points": "14400",
     "min_request_interval": "5.0",
     "max_consecutive_errors": "5",
-    # Special Mode
+    # Special Mode (Wishlist -> Group -> Recommended -> Copies -> DLC)
     "special_mode_cycle": "True",
-    "special_mode_stages": "Wishlist,Group,Recommended,DLC",
+    "special_mode_stages": "Wishlist,Group,Recommended,Copies,DLC",
     # Discord Integration
     "discord_webhook": "",
     "discord_notification_time": "23:00",
-    "discord_mention_stats": "False",     # Opt-in @here for daily stats (default: False to reduce noise)
-    "discord_mention_wins": "True",       # Opt-in @here for won giveaways (default: True as it is time-sensitive)
-    "discord_mention_alerts": "True",     # Opt-in @here for critical stop/cookie expiry (default: True for immediate action)
+    "discord_mention_stats": "False",     # Opt-in @here for daily stats (default: False)
+    "discord_mention_wins": "True",       # Opt-in @here for won giveaways (default: True)
+    "discord_mention_alerts": "True",     # Opt-in @here for critical cookie expiry (default: True)
     # Runtime & Logging
     "timezone": "Europe/Budapest",
     "log_level": "INFO",
@@ -40,7 +39,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "log_to_console": "True",
 }
 
-# Filter URL mappings
 FILTER_URLS: Dict[str, str] = {
     "Special Mode": "search?page={}&point_max={}",
     "All": "search?page={}&point_max={}",
@@ -56,9 +54,9 @@ SPECIAL_MODE_URLS: Dict[str, str] = {
     "Wishlist": "search?page={}&type=wishlist&point_max={}",
     "Recommended": "search?page={}&type=recommended&point_max={}",
     "Group": "search?page={}&type=group&point_max={}",
+    "Copies": "search?page={}&copy_min=2&point_max={}",
     "DLC": "search?page={}&dlc=true&point_max={}",
     "New": "search?page={}&type=new&point_max={}",
-    "Copies": "search?page={}&copy_min=2&point_max={}",
     "All": "search?page={}&point_max={}"
 }
 
@@ -69,8 +67,7 @@ def get_base_dir() -> str:
     if env_base:
         return os.path.abspath(env_base)
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(pkg_dir)
-    return parent_dir
+    return os.path.dirname(pkg_dir)
 
 
 def get_logs_dir() -> str:
@@ -125,7 +122,7 @@ class BotConfig:
         raw_stages = raw_config.get("special_mode_stages", DEFAULT_CONFIG["special_mode_stages"]).split(",")
         self.special_mode_stages: List[str] = [s.strip() for s in raw_stages if s.strip() in SPECIAL_MODE_URLS]
         if not self.special_mode_stages:
-            self.special_mode_stages = ["Wishlist", "Recommended", "Group"]
+            self.special_mode_stages = ["Wishlist", "Group", "Recommended", "Copies", "DLC"]
 
         # Discord
         self.discord_webhook: str = raw_config.get("discord_webhook", DEFAULT_CONFIG["discord_webhook"]).strip()

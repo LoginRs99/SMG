@@ -27,18 +27,19 @@ base_sleep_time = 120
 # Sleep time when no games found on page 1 (seconds)
 sleep_time_no_games = 1800
 
-# Sleep time when points are below min_points (seconds, e.g. 14400 = 4 hours)
+# Maximum sleep time when points are low (seconds, e.g. 14400 = 4 hours max cap)
+# Note: The bot now calculates dynamic point regen sleep automatically!
 sleep_time_no_points = 14400
 
 # Minimum time between consecutive HTTP requests (seconds)
 min_request_interval = 5.0
 
-# Maximum consecutive network/scraping errors before 15-minute cooldown
+# Maximum consecutive network/scraping errors before exponential backoff cooldown
 max_consecutive_errors = 5
 
-# Special Mode Settings
+# Special Mode Settings (Wishlist -> Group -> Recommended -> Copies -> DLC)
 special_mode_cycle = true
-special_mode_stages = Wishlist,Group,Recommended,DLC
+special_mode_stages = Wishlist,Group,Recommended,Copies,DLC
 
 # Discord Integration
 # Webhook URL for notifications (leave empty to disable)

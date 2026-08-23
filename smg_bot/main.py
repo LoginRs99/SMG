@@ -6,9 +6,9 @@ import logging
 import schedule
 from typing import Optional
 
-from smg_bot.config import BotConfig, load_config, get_logs_dir
+from smg_bot.config import BotConfig, load_config, get_logs_dir, get_config_path
 from smg_bot.client import SteamGiftsClient
-from smg_bot.giveaway_logic import GiveawayManager, get_sleep_time, log
+from smg_bot.giveaway_logic import GiveawayManager, get_sleep_time, interruptible_sleep, log
 from smg_bot.notifier import Statistics, DiscordNotifier
 
 # Global shutdown flag
@@ -40,7 +40,6 @@ def setup_logging(config: BotConfig) -> None:
         log_file_path = os.path.join(get_logs_dir(), "steamgifts_bot.log")
         handlers.append(logging.FileHandler(log_file_path, encoding="utf-8"))
 
-    # Reset root logger handlers
     root_logger = logging.getLogger()
     for h in list(root_logger.handlers):
         root_logger.removeHandler(h)
@@ -50,6 +49,56 @@ def setup_logging(config: BotConfig) -> None:
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=handlers
     )
+
+
+def wait_for_cookie_hot_reload(
+    config: BotConfig,
+    client: SteamGiftsClient,
+    giveaway_mgr: GiveawayManager,
+    notifier: DiscordNotifier
+) -> BotConfig:
+    """
+    Standby IDLE loop when authentication fails (ENHANCEMENT 2: Zero-crash Hot-Reload).
+    Watches config.ini for changes, reloads, and resumes automatically without container restart.
+    """
+    notifier.send_cookie_expired_notification()
+    log("🚨 Authentication failed (cookie invalid/expired). Entering IDLE standby mode...", "red")
+    log("💡 Paste the new PHPSESSID into config.ini - the bot will automatically hot-reload and resume!", "cyan")
+
+    config_path = get_config_path()
+    last_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+
+    while not shutdown_requested:
+        time.sleep(15)
+
+        if not os.path.exists(config_path):
+            continue
+
+        try:
+            current_mtime = os.path.getmtime(config_path)
+            if current_mtime > last_mtime:
+                log("🔍 Config file change detected! Checking updated configuration...", "cyan")
+                new_config = load_config(config_path)
+
+                # Test new credentials
+                client.config = new_config
+                client.cookie = new_config.cookie
+                giveaway_mgr.config = new_config
+
+                token, points = client.fetch_user_info()
+                giveaway_mgr.xsrf_token = token
+                giveaway_mgr.points = points
+
+                log(f"✅ New cookie verified successfully! Current points: {points}. Resuming bot operations.", "green")
+                notifier.config = new_config
+                notifier.send_cookie_recovered_notification()
+                return new_config
+
+        except Exception as e:
+            log(f"⏳ Cookie test failed ({e}). Remaining in IDLE standby mode...", "yellow")
+            last_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
+
+    return config
 
 
 def run_bot() -> None:
@@ -68,7 +117,7 @@ def run_bot() -> None:
 
     setup_logging(config)
     logging.info("--- SteamGifts Bot Starting ---")
-    logging.info(f"Loaded config with gift_type: {config.gift_type}, min_points: {config.min_points}, max_entries: {config.max_entries_per_session}")
+    logging.info(f"Loaded config with gift_type: {config.gift_type}, min_points: {config.min_points}, stages: {', '.join(config.special_mode_stages)}")
 
     # 2. Instantiate core components
     client = SteamGiftsClient(config)
@@ -77,13 +126,11 @@ def run_bot() -> None:
     giveaway_mgr = GiveawayManager(config, client)
     active_giveaway_manager = giveaway_mgr
 
-    # Initial check on startup (FROZEN auth-failure exit on invalid cookie)
+    # Initial check on startup
     try:
         giveaway_mgr.update_info()
-    except RuntimeError as e:
-        log(f"🚨 CRITICAL: {str(e)}", "red")
-        notifier.send_cookie_expired_notification()
-        sys.exit(1)
+    except RuntimeError:
+        config = wait_for_cookie_hot_reload(config, client, giveaway_mgr, notifier)
 
     # 3. Register schedules
     def schedule_daily_report():
@@ -100,6 +147,7 @@ def run_bot() -> None:
 
     log("🚀 Bot starting main loop...", "green")
     consecutive_errors = 0
+    error_backoff_cycle = 0
 
     while not shutdown_requested and not giveaway_mgr.shutdown_flag:
         try:
@@ -115,20 +163,36 @@ def run_bot() -> None:
             log("⏳ Cycle finished. Pausing...", "grey")
             cycle_sleep = get_sleep_time(config.base_sleep_time)
             time.sleep(cycle_sleep)
+
+            # Reset error counters on successful cycle
             consecutive_errors = 0
+            error_backoff_cycle = 0
 
         except RuntimeError as e:
-            # FROZEN: on expired cookie/auth failure, bot MUST raise and exit.
-            log(f"🚨 CRITICAL: {str(e)}", "red")
-            notifier.send_cookie_expired_notification()
-            break
+            # Authentication failure during runtime -> Enter Hot-Reload IDLE mode
+            log(f"🚨 Auth exception: {str(e)}", "red")
+            config = wait_for_cookie_hot_reload(config, client, giveaway_mgr, notifier)
+            consecutive_errors = 0
+            error_backoff_cycle = 0
 
         except Exception as e:
             consecutive_errors += 1
             log(f"ERROR: {str(e)}", "red")
+
+            # ENHANCEMENT 3: Exponential backoff with jitter on consecutive errors
             if consecutive_errors >= config.max_consecutive_errors:
-                log("🚫 Too many errors. Long sleep (15m).", "red")
-                time.sleep(900)
+                error_backoff_cycle += 1
+                # 300s (5m) -> 600s (10m) -> 1200s (20m) -> 2400s (40m) -> max 7200s (2h)
+                backoff_base = min(7200.0, 300.0 * (2 ** min(error_backoff_cycle - 1, 4)))
+                backoff_sleep = get_sleep_time(backoff_base)
+
+                log(f"🚫 Too many consecutive errors ({consecutive_errors}). Backoff cooldown: {int(backoff_sleep/60)}m (Cycle {error_backoff_cycle}).", "red")
+                interruptible_sleep(
+                    backoff_sleep,
+                    heartbeat_interval=300,
+                    reason=f"error backoff cycle {error_backoff_cycle}",
+                    shutdown_check=lambda: shutdown_requested
+                )
                 consecutive_errors = 0
 
         time.sleep(5)
