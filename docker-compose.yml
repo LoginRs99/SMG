@@ -5,15 +5,33 @@ services:
     image: ghcr.io/loginrs99/smg:latest
     build: .
     container_name: smg-bot
-    env_file:
-      - .env
     environment:
-      - TZ=${TIMEZONE:-Europe/Budapest}
+      - COOKIE=${COOKIE:-}
+      - DISCORD_WEBHOOK=${DISCORD_WEBHOOK:-}
+      - MIN_POINTS=${MIN_POINTS:-70}
+      - GIFT_TYPE=${GIFT_TYPE:-Special Mode}
+      - PINNED_GAMES=${PINNED_GAMES:-0}
+      - IGNORED_WORDS=${IGNORED_WORDS:-}
+      - MAX_ENTRIES_PER_SESSION=${MAX_ENTRIES_PER_SESSION:-8}
+      - BASE_SLEEP_TIME=${BASE_SLEEP_TIME:-120}
+      - SLEEP_TIME_NO_GAMES=${SLEEP_TIME_NO_GAMES:-1800}
+      - SLEEP_TIME_NO_POINTS=${SLEEP_TIME_NO_POINTS:-14400}
+      - MIN_REQUEST_INTERVAL=${MIN_REQUEST_INTERVAL:-5.0}
+      - MAX_CONSECUTIVE_ERRORS=${MAX_CONSECUTIVE_ERRORS:-5}
+      - SPECIAL_MODE_CYCLE=${SPECIAL_MODE_CYCLE:-true}
+      - SPECIAL_MODE_STAGES=${SPECIAL_MODE_STAGES:-Wishlist,Group,Recommended,Copies,DLC}
+      - DISCORD_NOTIFICATION_TIME=${DISCORD_NOTIFICATION_TIME:-23:00}
+      - DISCORD_MENTION_STATS=${DISCORD_MENTION_STATS:-false}
+      - DISCORD_MENTION_WINS=${DISCORD_MENTION_WINS:-true}
+      - DISCORD_MENTION_ALERTS=${DISCORD_MENTION_ALERTS:-true}
+      - TIMEZONE=${TIMEZONE:-Europe/Budapest}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_TO_FILE=${LOG_TO_FILE:-true}
+      - LOG_TO_CONSOLE=${LOG_TO_CONSOLE:-true}
       - LOGS_DIR=/app/logs
       - APP_DIR=/app
     volumes:
       - ./logs:/app/logs
-      - ./.env:/app/.env:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "/app/healthcheck.sh"]
