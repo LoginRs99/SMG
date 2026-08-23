@@ -2,6 +2,7 @@ import os
 import json
 import random
 import time
+import sys
 import logging
 from typing import List, Tuple, Optional, Set, Callable
 try:
@@ -15,10 +16,19 @@ from smg_bot.client import SteamGiftsClient
 
 
 def log(string: str, color: str) -> None:
-    """Log formatted colored message to console and file."""
+    """Log formatted colored message to console and file with immediate flush."""
     message = str(string)
-    print(colored(message, color))
+    try:
+        print(colored(message, color), flush=True)
+    except Exception:
+        print(message, flush=True)
     logging.info(message)
+    # Ensure all logger handlers flush immediately
+    for handler in logging.getLogger().handlers:
+        try:
+            handler.flush()
+        except Exception:
+            pass
 
 
 def get_sleep_time(base_time: float) -> float:
@@ -64,7 +74,7 @@ def interruptible_sleep(
         current_remaining = end_time - time.time()
         if current_remaining > 60:
             rem_min = int(current_remaining / 60)
-            logging.info(f"💤 Heartbeat: still sleeping ({rem_min}m remaining) [{reason}]")
+            log(f"💤 Heartbeat: still sleeping ({rem_min}m remaining) [{reason}]", "grey")
 
 
 class WonCache:

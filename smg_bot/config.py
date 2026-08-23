@@ -61,39 +61,6 @@ SPECIAL_MODE_URLS: Dict[str, str] = {
 }
 
 
-def load_dotenv(dotenv_path: Optional[str] = None) -> None:
-    """Load key-value pairs from .env file into os.environ."""
-    candidates = []
-    if dotenv_path:
-        candidates.append(dotenv_path)
-    else:
-        base_dir = get_base_dir()
-        candidates.extend([
-            os.path.join(base_dir, ".env"),
-            os.path.join(os.getcwd(), ".env"),
-            "/app/.env",
-            os.path.join(base_dir, "config", ".env")
-        ])
-
-    for path in candidates:
-        if os.path.isfile(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("#") or "=" not in line:
-                            continue
-                        key, val = line.split("=", 1)
-                        key = key.strip()
-                        val = val.strip().strip("'\"")
-                        if key:
-                            os.environ[key] = val
-                            os.environ[key.upper()] = val
-            except Exception as e:
-                logging.warning(f"Could not read .env file at {path}: {e}")
-            break
-
-
 def get_base_dir() -> str:
     """Resolve the base application directory across platforms."""
     env_base = os.environ.get("APP_DIR")
@@ -124,17 +91,75 @@ def get_config_path() -> str:
     return os.path.join(base_dir, "config", "config.ini")
 
 
+def get_all_config_watch_paths() -> List[str]:
+    """Return all possible config and .env file paths to watch for hot reloading."""
+    base_dir = get_base_dir()
+    paths = [
+        get_config_path(),
+        os.path.join(base_dir, "config", "config.ini"),
+        os.path.join(base_dir, "config", ".env"),
+        os.path.join(base_dir, ".env"),
+        os.path.join(os.getcwd(), ".env"),
+        os.path.join(os.getcwd(), "config", "config.ini"),
+        os.path.join(os.getcwd(), "config", ".env"),
+        "/app/config/config.ini",
+        "/app/config/.env",
+        "/app/.env"
+    ]
+    # Remove duplicates preserving order
+    seen = set()
+    result = []
+    for p in paths:
+        norm = os.path.normpath(p)
+        if norm not in seen:
+            seen.add(norm)
+            result.append(norm)
+    return result
+
+
+def load_dotenv() -> None:
+    """Load key-value pairs from all candidate .env files into os.environ."""
+    candidates = get_all_config_watch_paths()
+    for path in candidates:
+        if path.endswith(".env") and os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        key, val = line.split("=", 1)
+                        key = key.strip()
+                        val = val.strip().strip("'\"")
+                        # Skip placeholders
+                        if val in ("your_phpsessid_here", "#teszt"):
+                            continue
+                        if key:
+                            os.environ[key] = val
+                            os.environ[key.upper()] = val
+            except Exception as e:
+                logging.warning(f"Could not read .env file at {path}: {e}")
+
+
 def get_env_or_config(key: str, section: Optional[configparser.SectionProxy] = None) -> str:
     """
     Get setting with priority:
-    1. Environment variable (e.g. COOKIE or SMG_COOKIE)
-    2. config.ini section value
+    1. config.ini section value (if present and not placeholder)
+    2. Environment variable (e.g. COOKIE or SMG_COOKIE, if present and not placeholder)
     3. DEFAULT_CONFIG fallback
     """
+    # 1. Check config.ini first
+    if section is not None:
+        val = section.get(key, None)
+        if val is not None and val.strip() != "" and val.strip() not in ("your_phpsessid_here", "#teszt"):
+            return val.strip()
+
+    # 2. Check environment variables
     env_val = os.environ.get(key.upper()) or os.environ.get(f"SMG_{key.upper()}") or os.environ.get(key)
-    if env_val is not None and env_val.strip() != "":
+    if env_val is not None and env_val.strip() != "" and env_val.strip() not in ("your_phpsessid_here", "#teszt"):
         return env_val.strip()
 
+    # 3. Check config.ini even if placeholder as fallback
     if section is not None:
         val = section.get(key, None)
         if val is not None and val.strip() != "":
@@ -206,11 +231,18 @@ def load_config(config_path: Optional[str] = None) -> BotConfig:
         config_path = get_config_path()
 
     section = None
-    if os.path.exists(config_path):
-        config = configparser.ConfigParser(defaults=DEFAULT_CONFIG)
-        config.read(config_path, encoding="utf-8")
-        if "DEFAULT" in config:
-            section = config["DEFAULT"]
+    # Check config_path and alternative candidates
+    candidate_inies = [config_path, os.path.join(get_base_dir(), "config", "config.ini"), "/app/config/config.ini"]
+    for ini_path in candidate_inies:
+        if os.path.isfile(ini_path):
+            try:
+                config = configparser.ConfigParser(defaults=DEFAULT_CONFIG)
+                config.read(ini_path, encoding="utf-8")
+                if "DEFAULT" in config:
+                    section = config["DEFAULT"]
+                    break
+            except Exception as e:
+                logging.warning(f"Error parsing config file at {ini_path}: {e}")
 
     bot_config = BotConfig(section)
     validate_bot_config(bot_config)
@@ -237,15 +269,3 @@ def validate_bot_config(config: BotConfig) -> None:
 
     if config.discord_webhook and not config.discord_webhook.startswith("https://discord.com/api/webhooks/"):
         logging.warning(f"Discord webhook URL '{config.discord_webhook}' appears to be invalid.")
-
-
-def create_default_config_file(config_path: str) -> None:
-    """Create a default configuration template."""
-    directory = os.path.dirname(config_path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
-    config = configparser.ConfigParser()
-    config["DEFAULT"] = DEFAULT_CONFIG
-    with open(config_path, "w", encoding="utf-8") as f:
-        config.write(f)
-    logging.warning(f"Default configuration template created at {config_path}.")

@@ -6,7 +6,7 @@ import logging
 import schedule
 from typing import Optional
 
-from smg_bot.config import BotConfig, load_config, get_logs_dir, get_config_path, get_base_dir, load_dotenv
+from smg_bot.config import BotConfig, load_config, get_logs_dir, get_config_path, get_all_config_watch_paths, load_dotenv
 from smg_bot.client import SteamGiftsClient
 from smg_bot.giveaway_logic import GiveawayManager, get_sleep_time, interruptible_sleep, log
 from smg_bot.notifier import Statistics, DiscordNotifier
@@ -59,45 +59,47 @@ def wait_for_cookie_hot_reload(
 ) -> Optional[BotConfig]:
     """
     Standby IDLE loop when authentication fails or initial config is missing.
-    Watches .env and config.ini for changes, reloads, and resumes automatically without container restart.
+    Watches all candidate config and .env files for changes every 5 seconds,
+    reloads, and resumes automatically without container restart.
     Emits a heartbeat every 10 minutes to maintain Docker healthcheck status.
     """
     if notifier and notifier.webhook_url:
         notifier.send_cookie_expired_notification()
 
     log("🚨 Authentication needed. Entering IDLE standby mode...", "red")
-    log("💡 Paste your PHPSESSID into .env (COOKIE=...) or config/config.ini - the bot will automatically hot-reload and start!", "cyan")
+    log("💡 Paste your PHPSESSID into .env (COOKIE=...) or config/config.ini - the bot will automatically detect it and start!", "cyan")
 
-    config_path = get_config_path()
-    dotenv_paths = [
-        os.path.join(get_base_dir(), ".env"),
-        os.path.join(os.getcwd(), ".env"),
-        "/app/.env"
-    ]
-
-    last_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
-    last_dotenv_mtimes = {p: os.path.getmtime(p) if os.path.exists(p) else 0 for p in dotenv_paths}
+    watch_paths = get_all_config_watch_paths()
+    last_mtimes = {p: os.path.getmtime(p) if os.path.isfile(p) else 0 for p in watch_paths}
     last_heartbeat_time = time.time()
 
     while not shutdown_requested:
-        time.sleep(10)
+        time.sleep(5)
 
         # Emit IDLE heartbeat every 10 minutes (600s) for Docker healthcheck
         if time.time() - last_heartbeat_time >= 600:
-            logging.info("💤 Standby: Still waiting for valid COOKIE in .env or config.ini...")
+            log("💤 Standby: Still waiting for valid COOKIE in .env or config.ini...", "grey")
             last_heartbeat_time = time.time()
 
-        curr_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
-        dotenv_changed = any(
-            (os.path.getmtime(p) if os.path.exists(p) else 0) > last_dotenv_mtimes.get(p, 0)
-            for p in dotenv_paths
-        )
+        # Check if any candidate file was modified or newly created
+        changed_file = None
+        for p in watch_paths:
+            curr_mtime = os.path.getmtime(p) if os.path.isfile(p) else 0
+            if curr_mtime > last_mtimes.get(p, 0):
+                changed_file = p
+                last_mtimes[p] = curr_mtime
+                break
 
-        if curr_config_mtime > last_config_mtime or dotenv_changed:
-            log("🔍 Configuration file change detected! Testing updated credentials...", "cyan")
+        if changed_file:
+            log(f"🔍 File change detected in '{changed_file}'! Testing updated credentials...", "cyan")
             try:
+                # Remove stale cookie from environ before reloading
+                for env_key in ("COOKIE", "SMG_COOKIE", "cookie"):
+                    if env_key in os.environ and os.environ[env_key] in ("your_phpsessid_here", "#teszt", ""):
+                        os.environ.pop(env_key, None)
+
                 load_dotenv()
-                new_config = load_config(config_path)
+                new_config = load_config()
 
                 test_client = client or SteamGiftsClient(new_config)
                 test_client.config = new_config
@@ -123,8 +125,9 @@ def wait_for_cookie_hot_reload(
 
             except Exception as e:
                 log(f"⏳ Verification failed ({e}). Remaining in IDLE standby mode...", "yellow")
-                last_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
-                last_dotenv_mtimes = {p: os.path.getmtime(p) if os.path.exists(p) else 0 for p in dotenv_paths}
+                # Update mtimes so we don't loop unnecessarily until the next file edit
+                for p in watch_paths:
+                    last_mtimes[p] = os.path.getmtime(p) if os.path.isfile(p) else 0
 
     return None
 
@@ -146,7 +149,7 @@ def run_bot() -> None:
             config = wait_for_cookie_hot_reload(None, None, None, None)
             if config:
                 break
-            time.sleep(10)
+            time.sleep(5)
 
     if shutdown_requested or config is None:
         return
