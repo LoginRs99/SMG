@@ -1,4 +1,4 @@
-# SMG Bot
+# SMG
 
 Automatizációs bot Docker és helyi környezetre.
 
