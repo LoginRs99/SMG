@@ -91,6 +91,9 @@ class WonCache:
 
     def save(self) -> None:
         try:
+            parent_dir = os.path.dirname(self.cache_file)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
             with open(self.cache_file, "w", encoding="utf-8") as f:
                 json.dump(sorted(list(self.won_games)), f, indent=2, ensure_ascii=False)
         except Exception as e:
@@ -163,7 +166,7 @@ class GiveawayManager:
 
     def sleep_if_not_enough_points(self) -> bool:
         """
-        Dynamically calculate sleep duration based on missing points (ENHANCEMENT 1).
+        Dynamically calculate sleep duration based on missing points.
         SteamGifts awards ~20-25P per hour (~150s per point).
         Clamped between 15 minutes (900s) and sleep_time_no_points (max 4h) with jitter.
         """
@@ -171,7 +174,6 @@ class GiveawayManager:
             return False
 
         missing_points = max(1, self.min_points - self.points)
-        # Estimated regen time: ~150 seconds per point
         estimated_regen_seconds = missing_points * 150
         clamped_wait = max(900.0, min(float(self.sleep_time_no_points), float(estimated_regen_seconds)))
         sleep_duration = get_sleep_time(clamped_wait)
@@ -256,6 +258,14 @@ class GiveawayManager:
                 result = response.json()
                 if result.get("type") == "success":
                     stats_callback(True, game_cost)
+                    # Sync exact points from server response if available
+                    if "points" in result and result["points"] is not None:
+                        try:
+                            self.points = int(result["points"])
+                        except (ValueError, TypeError):
+                            self.points -= game_cost
+                    else:
+                        self.points -= game_cost
                     return True
                 else:
                     msg = result.get('msg', 'Unknown error from SG')
@@ -371,7 +381,6 @@ class GiveawayManager:
                 human_delay(base=2.0, variance=1.5)
 
                 if self.entry_gift(game_id, game_cost, game_name, stats_callback):
-                    self.points -= game_cost
                     self.entries_count += 1
                     log(f"🎉 Entered: {game_name} ({game_cost}P). Points left: {self.points}. Session entries: {self.entries_count}/{self.max_entries_per_session}", "green")
 

@@ -60,6 +60,7 @@ def wait_for_cookie_hot_reload(
     """
     Standby IDLE loop when authentication fails or initial config is missing.
     Watches .env and config.ini for changes, reloads, and resumes automatically without container restart.
+    Emits a heartbeat every 10 minutes to maintain Docker healthcheck status.
     """
     if notifier and notifier.webhook_url:
         notifier.send_cookie_expired_notification()
@@ -76,9 +77,15 @@ def wait_for_cookie_hot_reload(
 
     last_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
     last_dotenv_mtimes = {p: os.path.getmtime(p) if os.path.exists(p) else 0 for p in dotenv_paths}
+    last_heartbeat_time = time.time()
 
     while not shutdown_requested:
         time.sleep(10)
+
+        # Emit IDLE heartbeat every 10 minutes (600s) for Docker healthcheck
+        if time.time() - last_heartbeat_time >= 600:
+            logging.info("💤 Standby: Still waiting for valid COOKIE in .env or config.ini...")
+            last_heartbeat_time = time.time()
 
         curr_config_mtime = os.path.getmtime(config_path) if os.path.exists(config_path) else 0
         dotenv_changed = any(
@@ -106,9 +113,11 @@ def wait_for_cookie_hot_reload(
                     giveaway_mgr.xsrf_token = token
                     giveaway_mgr.points = points
 
-                if notifier:
+                if notifier is None:
+                    notifier = DiscordNotifier(new_config)
+                else:
                     notifier.config = new_config
-                    notifier.send_cookie_recovered_notification()
+                notifier.send_cookie_recovered_notification()
 
                 return new_config
 

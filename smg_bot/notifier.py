@@ -80,6 +80,9 @@ class NotifiedWinsStore:
 
     def save(self) -> None:
         try:
+            parent_dir = os.path.dirname(self.store_file)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
             with open(self.store_file, "w", encoding="utf-8") as f:
                 json.dump(sorted(list(self.notified_wins)), f, indent=2, ensure_ascii=False)
         except Exception as e:
@@ -150,11 +153,11 @@ class DiscordNotifier:
                     "**How to resume:**\n"
                     "1. Log in to [SteamGifts.com](https://www.steamgifts.com)\n"
                     "2. Copy your new `PHPSESSID` cookie\n"
-                    "3. Paste it into `config.ini`\n\n"
+                    "3. Paste it into `config.ini` or `.env`\n\n"
                     "💡 *The bot will automatically detect the file change, reload the cookie, and resume without container restart!*"
                 ),
                 "color": 0xFF0000,
-                "footer": {"text": "Bot is standing by for config.ini update."},
+                "footer": {"text": "Bot is standing by for config update."},
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }]
         }

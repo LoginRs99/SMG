@@ -1,15 +1,15 @@
 # HTTP and network stack
-requests==2.32.5
-urllib3==2.6.3
-certifi==2026.2.25
-idna==3.10
+requests>=2.31.0
+urllib3>=2.0.0
+certifi>=2024.0.0
+idna>=3.7
 
-# HTML parsing & CLI styling (using stdlib html.parser - pure Python, no C-extension issues)
-beautifulsoup4==4.14.3
-termcolor==3.1.0
+# HTML parsing & CLI styling (Pure Python, zero C-extension issues)
+beautifulsoup4>=4.12.0
+termcolor>=2.4.0
 
 # Job scheduling
-schedule==1.2.2
+schedule>=1.2.0
 
 # Timezone fallback for Python < 3.9
 backports.zoneinfo; python_version < "3.9"

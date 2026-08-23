@@ -31,7 +31,7 @@ ENV PYTHONUNBUFFERED=1 \
 # Healthcheck script
 RUN echo '#!/bin/sh\n\
 # Check if bot process is running\n\
-if ! ps aux | grep -v grep | grep "smg_bot.main" > /dev/null; then\n\
+if ! ps aux | grep -v grep | grep -E "smg_bot" > /dev/null; then\n\
   echo "Bot process not running!"\n\
   exit 1\n\
 fi\n\
