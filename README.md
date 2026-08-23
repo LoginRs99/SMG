@@ -1,27 +1,30 @@
-# SteamGifts Bot (SMG) 🎁
+# SMG Bot 🤖
 
-Modern, megbízható és moduláris SteamGifts automatizációs bot 24/7-es Docker futtatásra tervezve.
+Modern, megbízható és moduláris ajándéksorsolás-automatizációs bot 24/7-es Docker futtatásra tervezve.
 
 ---
 
 ## 🌟 Főbb funkciók
 
-- **Automatikus jelentkezés:** Kívánságlista, ajánlott játékok, csoportos ajándékok és egyéb kategóriák kezelése.
-- **Special Mode:** Ciklikusan körbejárja a beállított kategóriákat (`Wishlist`, `Group`, `Recommended`, `DLC`).
-- **WonCache (Új):** Helyi perzisztens gyorsítótár (`logs/won_cache.json`) a korábban megnyert játékok AJAX kérések nélküli kihagyására.
+- **Automatikus részvétel:** Kívánságlista, ajánlott elemek, csoportos sorsolások és egyéb egyéni kategóriák intelligens kezelése.
+- **Special Mode:** Ciklikusan körbejárja a beállított kategóriákat (`Wishlist`, `Group`, `Recommended`, `Copies`, `DLC`).
+- **WonCache:** Helyi perzisztens gyorsítótár (`logs/won_cache.json`) a korábban megnyert tételek felesleges hálózati kérések nélküli szűrésére.
+- **Dinamikus pontkezelés:** Intelligens alvási idő kalkuláció az aktuális pontszám és a visszatöltődési ráta alapján.
 - **Anti-detection & Stealth:**
   - Kérésenkénti böngésző User-Agent rotáció.
   - Szigorú, kérések közötti minimum intervallum (`min_request_interval = 5.0s`).
   - $\pm 20\%$ véletlenszerű időzítési szórás (jitter) és emberi késleltetések (`human_delay`).
-  - 15%-os véletlenszerű játék-kihagyás az emberi viselkedés szimulációjához.
+  - 15%-os véletlenszerű kihagyás a természetes felhasználói viselkedés szimulációjához.
+- **Zero-Crash Hot-Reload:** Munkamenet-lejárat esetén IDLE készenlétbe áll, és automatikusan betölti a frissített konfigurációt konténer-újraindítás nélkül.
+- **Exponenciális hibakezelés:** Hálózati anomáliák esetén dinamikusan növekvő backoff várakozás.
 - **Discord integráció:**
   - Napi statisztikai összesítő (üzemidő, sikerességi ráta, pontgazdaság).
   - Nyeremény-értesítések perzisztens deduplikációval (`notified_wins.json`).
-  - Kritikus riasztás (pl. PHPSESSID cookie lejárat).
+  - Munkamenet-lejárat és helyreállítási riasztások.
   - Konfigurálható `@here` említések.
 - **Docker & Healthcheck optimalizált:**
-  - Heartbeat mechanizmus a 4 órás pontgyűjtő alvások alatt, megelőzve a hamis Docker healthcheck leállásokat.
-  - Secret leak védelem: az éles `config.ini` soha nem kerül az image-be, csak runtime mountként érkezik.
+  - Heartbeat mechanizmus a hosszú várakozási ciklusok alatt, megelőzve a hamis Docker healthcheck leállásokat.
+  - Secret leak védelem: a konfiguráció soha nem kerül az image-be, kizárólag runtime mountként érkezik.
 
 ---
 
@@ -38,7 +41,7 @@ SMG/
 │   ├── __init__.py
 │   ├── client.py                 # HTTP munkamenet, rate limiting, DOM feldolgozás
 │   ├── config.py                 # Konfigurációkezelés, validáció, alapértelmezések
-│   ├── giveaway_logic.py         # Giveaway szűrés, belépési ciklus, WonCache
+│   ├── giveaway_logic.py         # Szűrés, belépési ciklus, WonCache
 │   ├── main.py                   # Belépési pont, ütemezés, vezérlés
 │   └── notifier.py               # Discord értesítések és statisztika
 ├── .dockerignore
@@ -55,7 +58,7 @@ SMG/
 ## 🚀 Használat Dockerrel
 
 ### 1. Konfiguráció előkészítése
-Másold le a konfigurációs sablont és add meg a saját SteamGifts PHPSESSID cookie-dat:
+Másold le a konfigurációs sablont és add meg a hitelesítési adataidat:
 
 ```bash
 cp config/config.ini.example config/config.ini
