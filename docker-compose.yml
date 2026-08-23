@@ -1,9 +1,10 @@
 version: '3.8'
 
 services:
-  steamgifts-bot:
+  smg-bot:
+    image: ghcr.io/loginrs99/smg:latest
     build: .
-    container_name: steamgifts-bot
+    container_name: smg-bot
     environment:
       - TZ=Europe/Budapest
       - CONFIG_PATH=/app/config/config.ini
